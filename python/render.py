@@ -24,6 +24,10 @@ def concise_error(error):
     """Extract one useful compiler diagnostic instead of dumping its log."""
     text = str(error)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    missing_class = re.search(r"LaTeX Error: File [`']([^`']+\.cls)' not found", text)
+    if missing_class:
+        name = missing_class.group(1)
+        return f'Missing custom LaTeX class {name}. Put it beside the source file or change \\documentclass.'
     for line in lines:
         if line.startswith('! LaTeX Error:'):
             return line[2:][:800]

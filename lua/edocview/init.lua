@@ -30,6 +30,16 @@ local function show_status(s, title, detail)
 	vim.bo[s.preview_buf].modified = false
 end
 
+local function clear_status(s)
+	if not valid(s) then
+		return
+	end
+	vim.bo[s.preview_buf].modifiable = true
+	vim.api.nvim_buf_set_lines(s.preview_buf, 0, -1, false, { "" })
+	vim.bo[s.preview_buf].modifiable = false
+	vim.bo[s.preview_buf].modified = false
+end
+
 local function clear_images(s)
 	for _, page in pairs(s.page_cache or {}) do
 		if page.image then
@@ -55,6 +65,11 @@ local function terminal_cell_size()
 		return size.cell_width, size.cell_height
 	end
 	return opts.pixels_per_column, opts.pixels_per_row
+end
+
+local function preview_width(s)
+	local info = vim.fn.getwininfo(s.preview_win)[1]
+	return math.max(1, info.width - info.textoff)
 end
 
 local function set_preview_fraction(s, fraction)
@@ -83,7 +98,7 @@ local function set_preview_fraction(s, fraction)
 		pcall(s.image.clear, s.image, true)
 	end
 	selected.image.render_offset_top = -offset
-	selected.image:render({ x = 0, y = 0, width = s.rendered_cols, height = selected.height })
+	selected.image:render({ x = 0, y = 0, width = s.rendered_cols })
 	s.image = selected.image
 	s.page_offset = offset
 	s.view_fraction = fraction
@@ -115,7 +130,7 @@ local function render_pages(s)
 		return
 	end
 
-	local cols = vim.api.nvim_win_get_width(s.preview_win)
+	local cols = preview_width(s)
 	if s.rendered_pdf == s.pdf and s.rendered_cols == cols then
 		return
 	end
@@ -136,7 +151,7 @@ local function render_pages(s)
 			end
 			if result.code ~= 0 and s.pdf == pdf then
 				error_message((result.stderr or result.stdout or "page rasterization failed"):sub(-1600))
-			elseif serial == s.render_serial and s.pdf == pdf and vim.api.nvim_win_get_width(s.preview_win) == cols then
+			elseif serial == s.render_serial and s.pdf == pdf and preview_width(s) == cols then
 				local ok, pages = pcall(vim.json.decode, result.stdout)
 				if not ok or type(pages) ~= "table" or #pages == 0 then
 					error_message("page rasterizer returned no pages")
@@ -156,6 +171,7 @@ local function render_pages(s)
 					s.total_rows = math.max(1, total_rows - opts.page_gap)
 					s.rendered_pdf = s.pdf
 					s.rendered_cols = cols
+					clear_status(s)
 
 					local old_cache = s.page_cache or {}
 					local new_cache = {}
@@ -175,7 +191,6 @@ local function render_pages(s)
 								x = 0,
 								y = 0,
 								width = cols,
-								height = page.height,
 								inline = false,
 								with_virtual_padding = false,
 								namespace = "edocview",
@@ -270,8 +285,10 @@ function M.stop()
 	end
 	session = nil
 	if s.timer then
-		s.timer:stop()
-		s.timer:close()
+		pcall(s.timer.stop, s.timer)
+		if not s.timer:is_closing() then
+			pcall(s.timer.close, s.timer)
+		end
 	end
 	if s.group then
 		pcall(vim.api.nvim_del_augroup_by_id, s.group)
@@ -377,9 +394,14 @@ function M.open()
 	vim.wo[preview_win].relativenumber = false
 	vim.wo[preview_win].signcolumn = "no"
 	vim.wo[preview_win].statuscolumn = ""
+	vim.wo[preview_win].foldcolumn = "0"
 	vim.wo[preview_win].cursorline = false
 	vim.wo[preview_win].wrap = false
 	vim.wo[preview_win].scrollbind = false
+	vim.wo[preview_win].list = false
+	vim.api.nvim_win_call(preview_win, function()
+		vim.opt_local.fillchars:append({ eob = " " })
+	end)
 	vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { "Rendering…" })
 	vim.bo[preview_buf].modifiable = false
 	vim.bo[preview_buf].modified = false
@@ -449,7 +471,7 @@ function M.open()
 	vim.api.nvim_create_autocmd("WinResized", {
 		group = s.group,
 		callback = function()
-			if valid(s) and s.rendered_cols ~= vim.api.nvim_win_get_width(preview_win) then
+			if valid(s) and s.rendered_cols ~= preview_width(s) then
 				s.rendered_cols = nil
 				render_pages(s)
 			end
@@ -459,15 +481,19 @@ function M.open()
 		group = s.group,
 		callback = function(args)
 			if tonumber(args.match) == source_win or tonumber(args.match) == preview_win then
-				M.stop()
+				vim.schedule(function()
+					if session == s then
+						M.stop()
+					end
+				end)
 			end
 		end,
 	})
 	vim.api.nvim_create_autocmd("VimLeavePre", {
 		group = s.group,
 		callback = function()
-			clear_images(s)
-			vim.fn.delete(dir, "rf")
+			pcall(clear_images, s)
+			pcall(vim.fn.delete, dir, "rf")
 		end,
 	})
 

@@ -20,7 +20,8 @@ visible page without turning the preview into a scrollable Vim buffer.
 - Hot reload after buffer edits
 - Source-driven preview synchronization; cursor motion alone does not make the
   preview jump
-- A non-scrollable preview pane that displays only one page image at a time
+- A non-scrollable, marker-free preview pane that displays one page image at a
+  time and automatically refits it when the split width changes
 - Saving from either split always writes the source document; the preview is an
   unlisted, read-only synthetic buffer
 - XeLaTeX compilation for complete documents and automatically wrapped LaTeX
@@ -105,7 +106,9 @@ The preview is rasterized, so rendered text cannot be selected and links are not
 interactive. Transient errors while typing keep the last successful preview
 without interrupting editing; errors are reported after an explicit save.
 Empty and definition-only LaTeX sources render as a blank page instead of
-surfacing `latexmk`'s zero-page error.
+surfacing `latexmk`'s zero-page error. Custom document classes such as
+`cisXXX.cls` must be stored beside the source document (or otherwise be
+available to TeX); missing classes are reported with a short actionable error.
 
 ## License
 
