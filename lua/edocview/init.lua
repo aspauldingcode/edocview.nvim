@@ -197,6 +197,12 @@ local function render_pages(s)
 								max_width_window_percentage = 100,
 								ignore_global_max_size = true,
 							})
+							-- image.nvim currently declares this option but does not copy it
+							-- onto file-backed image instances. Set it explicitly so its
+							-- global height cap cannot defeat edocview's fit-width layout.
+							if image then
+								image.ignore_global_max_size = true
+							end
 						end
 						if image then
 							page.image = image
