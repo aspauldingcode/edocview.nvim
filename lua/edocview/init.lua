@@ -20,6 +20,16 @@ local function error_message(message)
 	end)
 end
 
+local function show_status(s, title, detail)
+	if not valid(s) or s.pdf then
+		return
+	end
+	vim.bo[s.preview_buf].modifiable = true
+	vim.api.nvim_buf_set_lines(s.preview_buf, 0, -1, false, { title, "", detail or "" })
+	vim.bo[s.preview_buf].modifiable = false
+	vim.bo[s.preview_buf].modified = false
+end
+
 local function clear_images(s)
 	for _, image in ipairs(s.images or {}) do
 		pcall(image.clear, image)
@@ -74,7 +84,8 @@ local function resize_preview_buffer(s, total_rows)
 	local current_rows = vim.api.nvim_buf_line_count(s.preview_buf)
 	vim.bo[s.preview_buf].modifiable = true
 	if not s.preview_initialized then
-		vim.api.nvim_buf_set_lines(s.preview_buf, 0, 1, false, { "" })
+		vim.api.nvim_buf_set_lines(s.preview_buf, 0, -1, false, { "" })
+		current_rows = 1
 		s.preview_initialized = true
 	end
 	if total_rows > current_rows then
@@ -263,8 +274,18 @@ local function compile(s, report_error)
 				s.pdf = pdf
 				s.rendered_pdf = nil
 				render_pages(s)
-			elseif result.code ~= 0 and report_error then
-				error_message((result.stderr or result.stdout or "render failed"):sub(-1600))
+			elseif result.code ~= 0 then
+				local message = vim.trim(result.stderr or result.stdout or "document compiler failed")
+				if report_error then
+					show_status(s, "Preview unavailable", message)
+					error_message(message)
+				else
+					show_status(
+						s,
+						"Waiting for valid document…",
+						"The last successful preview will return automatically."
+					)
+				end
 			end
 			if s.recompile then
 				s.recompile = false

@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -17,6 +18,44 @@ def run(command, cwd, env=None, stdin=None):
     )
     if result.returncode:
         raise RuntimeError(result.stdout[-1500:] + '\n' + result.stderr[-2500:])
+
+
+def concise_error(error):
+    """Extract one useful compiler diagnostic instead of dumping its log."""
+    text = str(error)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        if re.search(r'\.tex:\d+:', line):
+            return ' '.join(lines[index:index + 3])[:800]
+    for line in lines:
+        if line.startswith('! '):
+            return line[2:][:800]
+    for line in lines:
+        if line.lower().startswith(('error:', 'fatal:')):
+            return line[:800]
+    return (lines[-1] if lines else 'document compiler failed')[:800]
+
+
+def latex_command(source):
+    return [
+        'latexmk',
+        '-xelatex',
+        '-interaction=nonstopmode',
+        '-halt-on-error',
+        '-file-line-error',
+        '-output-directory=' + str(source.parent),
+        str(source),
+    ]
+
+
+def latex_body_is_empty(contents):
+    body = contents
+    if r'\begin{document}' in body:
+        body = body.split(r'\begin{document}', 1)[1]
+    if r'\end{document}' in body:
+        body = body.split(r'\end{document}', 1)[0]
+    body = re.sub(r'(?<!\\)%.*', '', body)
+    return not body.strip()
 
 
 def compile_document(source, target, original):
@@ -79,19 +118,32 @@ def compile_document(source, target, original):
                 + contents
                 + '\n\\end{document}\n'
             )
-        run(
-            [
-                'latexmk',
-                '-xelatex',
-                '-interaction=nonstopmode',
-                '-halt-on-error',
-                '-file-line-error',
-                '-output-directory=' + str(source.parent),
-                str(compile_source),
-            ],
-            original,
-            env,
-        )
+        if latex_body_is_empty(compile_source.read_text()):
+            placeholder = source.parent / 'edocview-placeholder.tex'
+            placeholder.write_text(
+                compile_source.read_text().replace(
+                    r'\begin{document}',
+                    r'\begin{document}\mbox{}',
+                    1,
+                )
+            )
+            compile_source = placeholder
+        try:
+            run(latex_command(compile_source), original, env)
+        except RuntimeError as error:
+            message = str(error)
+            if 'No pages of output' not in message and 'no output was made' not in message:
+                raise RuntimeError(concise_error(error)) from error
+            placeholder = source.parent / 'edocview-placeholder.tex'
+            placeholder.write_text(
+                compile_source.read_text().replace(
+                    r'\begin{document}',
+                    r'\begin{document}\mbox{}',
+                    1,
+                )
+            )
+            run(latex_command(placeholder), original, env)
+            compile_source = placeholder
         (source.parent / (compile_source.stem + '.pdf')).replace(target)
     else:
         raise ValueError('unsupported format: ' + kind)
@@ -134,5 +186,5 @@ if __name__ == '__main__':
         else:
             raise ValueError('expected compile or pages')
     except Exception as error:
-        print(error, file=sys.stderr)
+        print(concise_error(error), file=sys.stderr)
         sys.exit(1)

@@ -102,6 +102,8 @@ paragraph, especially when figures, equations, or page breaks change the layout.
 The preview is rasterized, so rendered text cannot be selected and links are not
 interactive. Transient errors while typing keep the last successful preview
 without interrupting editing; errors are reported after an explicit save.
+Empty and definition-only LaTeX sources render as a blank page instead of
+surfacing `latexmk`'s zero-page error.
 
 ## License
 
