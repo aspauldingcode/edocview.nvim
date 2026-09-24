@@ -31,17 +31,13 @@ local function show_status(s, title, detail)
 end
 
 local function clear_images(s)
-	for _, image in ipairs(s.images or {}) do
-		pcall(image.clear, image)
+	for _, page in pairs(s.page_cache or {}) do
+		if page.image then
+			pcall(page.image.clear, page.image)
+		end
 	end
-	s.images = {}
+	s.image = nil
 	s.page_cache = {}
-end
-
-local function source_cursor_fraction(s)
-	local line = vim.api.nvim_win_get_cursor(s.source_win)[1]
-	local total = vim.api.nvim_buf_line_count(s.source_buf)
-	return (line - 1) / math.max(1, total - 1)
 end
 
 local function source_view_fraction(s)
@@ -49,25 +45,6 @@ local function source_view_fraction(s)
 	local total = vim.api.nvim_buf_line_count(s.source_buf)
 	local height = vim.api.nvim_win_get_height(s.source_win)
 	return (info.topline - 1) / math.max(1, total - height)
-end
-
-local function preview_view_fraction(s)
-	local info = vim.fn.getwininfo(s.preview_win)[1]
-	local height = vim.api.nvim_win_get_height(s.preview_win)
-	return (info.topline - 1) / math.max(1, (s.total_rows or 1) - height)
-end
-
-local function with_sync_guard(s, callback)
-	if not valid(s) then
-		return
-	end
-	s.syncing = true
-	callback()
-	vim.defer_fn(function()
-		if session == s then
-			s.syncing = false
-		end
-	end, 30)
 end
 
 local function terminal_cell_size()
@@ -80,61 +57,53 @@ local function terminal_cell_size()
 	return opts.pixels_per_column, opts.pixels_per_row
 end
 
-local function resize_preview_buffer(s, total_rows)
-	local current_rows = vim.api.nvim_buf_line_count(s.preview_buf)
-	vim.bo[s.preview_buf].modifiable = true
-	if not s.preview_initialized then
-		vim.api.nvim_buf_set_lines(s.preview_buf, 0, -1, false, { "" })
-		current_rows = 1
-		s.preview_initialized = true
-	end
-	if total_rows > current_rows then
-		local lines = {}
-		for index = 1, total_rows - current_rows do
-			lines[index] = ""
-		end
-		vim.api.nvim_buf_set_lines(s.preview_buf, current_rows, -1, false, lines)
-	elseif total_rows < current_rows then
-		vim.api.nvim_buf_set_lines(s.preview_buf, total_rows, -1, false, {})
-	end
-	vim.bo[s.preview_buf].modifiable = false
-	vim.bo[s.preview_buf].modified = false
-end
-
 local function set_preview_fraction(s, fraction)
-	if not valid(s) or not s.total_rows then
+	if not valid(s) or not s.total_rows or not s.page_layout then
 		return
 	end
 	fraction = math.max(0, math.min(1, fraction))
 	local height = vim.api.nvim_win_get_height(s.preview_win)
-	local top = math.floor(fraction * math.max(0, s.total_rows - height)) + 1
-	if vim.fn.getwininfo(s.preview_win)[1].topline == top then
+	local top = math.floor(fraction * math.max(0, s.total_rows - height))
+	local selected = s.page_layout[#s.page_layout]
+	for _, page in ipairs(s.page_layout) do
+		if top < page.row + page.height + opts.page_gap then
+			selected = page
+			break
+		end
+	end
+	if not selected or not selected.image then
 		return
 	end
-	with_sync_guard(s, function()
-		vim.api.nvim_win_call(s.preview_win, function()
-			vim.api.nvim_win_set_cursor(s.preview_win, { math.min(s.total_rows, top + math.floor(height / 2)), 0 })
-			vim.fn.winrestview({ topline = top, leftcol = 0 })
-		end)
-	end)
+
+	local offset = math.max(0, math.min(math.max(0, selected.height - height), top - selected.row))
+	if s.image == selected.image and s.page_offset == offset then
+		return
+	end
+	if s.image and s.image ~= selected.image then
+		pcall(s.image.clear, s.image, true)
+	end
+	selected.image.render_offset_top = -offset
+	selected.image:render({ x = 0, y = 0, width = s.rendered_cols, height = selected.height })
+	s.image = selected.image
+	s.page_offset = offset
+	s.view_fraction = fraction
 end
 
-local function set_source_fraction(s, fraction)
-	if not valid(s) then
+local function queue_preview_fraction(s, fraction)
+	s.pending_fraction = fraction
+	if s.preview_update_pending then
 		return
 	end
-	fraction = math.max(0, math.min(1, fraction))
-	local total = vim.api.nvim_buf_line_count(s.source_buf)
-	local line = math.floor(fraction * math.max(0, total - 1)) + 1
-	if vim.api.nvim_win_get_cursor(s.source_win)[1] == line then
-		return
-	end
-	with_sync_guard(s, function()
-		vim.api.nvim_win_set_cursor(s.source_win, { line, 0 })
-		vim.api.nvim_win_call(s.source_win, function()
-			vim.cmd("normal! zz")
-		end)
-	end)
+	s.preview_update_pending = true
+	vim.defer_fn(function()
+		if not valid(s) then
+			return
+		end
+		s.preview_update_pending = false
+		local pending = s.pending_fraction
+		s.pending_fraction = nil
+		set_preview_fraction(s, pending)
+	end, 8)
 end
 
 local function render_pages(s)
@@ -185,23 +154,16 @@ local function render_pages(s)
 						total_rows = total_rows + page_rows + opts.page_gap
 					end
 					s.total_rows = math.max(1, total_rows - opts.page_gap)
-					resize_preview_buffer(s, s.total_rows)
 					s.rendered_pdf = s.pdf
 					s.rendered_cols = cols
-					set_preview_fraction(s, source_cursor_fraction(s))
 
 					local old_cache = s.page_cache or {}
 					local new_cache = {}
-					local images = {}
 					for index, page in ipairs(page_layout) do
 						local cached = old_cache[index]
 						local image
 						if cached and cached.hash == page.hash and cached.height == page.height then
 							image = cached.image
-							if cached.row ~= page.row then
-								pcall(image.clear, image)
-							end
-							image:render({ x = 0, y = page.row, width = cols, height = page.height })
 						else
 							if cached and cached.image then
 								pcall(cached.image.clear, cached.image)
@@ -211,21 +173,19 @@ local function render_pages(s)
 								window = s.preview_win,
 								buffer = s.preview_buf,
 								x = 0,
-								y = page.row,
+								y = 0,
 								width = cols,
 								height = page.height,
-								inline = true,
+								inline = false,
+								with_virtual_padding = false,
 								namespace = "edocview",
 								max_width_window_percentage = 100,
 								ignore_global_max_size = true,
 							})
-							if image then
-								image:render()
-							end
 						end
 						if image then
-							images[#images + 1] = image
-							new_cache[index] = { hash = page.hash, height = page.height, row = page.row, image = image }
+							page.image = image
+							new_cache[index] = page
 						end
 					end
 					for index = #page_layout + 1, #old_cache do
@@ -233,8 +193,14 @@ local function render_pages(s)
 							pcall(old_cache[index].image.clear, old_cache[index].image)
 						end
 					end
-					s.images = images
+					if s.image then
+						pcall(s.image.clear, s.image, true)
+					end
 					s.page_cache = new_cache
+					s.page_layout = page_layout
+					s.image = nil
+					s.page_offset = nil
+					set_preview_fraction(s, source_view_fraction(s))
 				end
 			end
 
@@ -295,20 +261,6 @@ local function compile(s, report_error)
 			end
 		end)
 	end)
-end
-
-local function scroll_preview(s, delta)
-	if not valid(s) or not s.total_rows then
-		return
-	end
-	vim.api.nvim_win_call(s.preview_win, function()
-		local view = vim.fn.winsaveview()
-		local height = vim.api.nvim_win_get_height(s.preview_win)
-		view.topline = math.max(1, math.min(s.total_rows - height + 1, view.topline + delta))
-		vim.api.nvim_win_set_cursor(s.preview_win, { math.min(s.total_rows, view.topline + math.floor(height / 2)), 0 })
-		vim.fn.winrestview(view)
-	end)
-	set_source_fraction(s, preview_view_fraction(s))
 end
 
 function M.stop()
@@ -427,6 +379,7 @@ function M.open()
 	vim.wo[preview_win].statuscolumn = ""
 	vim.wo[preview_win].cursorline = false
 	vim.wo[preview_win].wrap = false
+	vim.wo[preview_win].scrollbind = false
 	vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { "Rendering…" })
 	vim.bo[preview_buf].modifiable = false
 	vim.bo[preview_buf].modified = false
@@ -440,25 +393,13 @@ function M.open()
 		dir = dir,
 		extension = ext,
 		generation = 0,
-		images = {},
 		page_cache = {},
 	}
 	session = s
 
-	local function page_delta(multiplier)
-		return math.max(1, math.floor(vim.api.nvim_win_get_height(preview_win) * multiplier))
+	for _, key in ipairs({ "j", "k", "<C-d>", "<C-u>", "<ScrollWheelDown>", "<ScrollWheelUp>" }) do
+		vim.keymap.set("n", key, "<Nop>", { buffer = preview_buf, silent = true })
 	end
-	for key, delta in pairs({ j = 1, k = -1, ["<ScrollWheelDown>"] = 3, ["<ScrollWheelUp>"] = -3 }) do
-		vim.keymap.set("n", key, function()
-			scroll_preview(s, delta)
-		end, { buffer = preview_buf, silent = true })
-	end
-	vim.keymap.set("n", "<C-d>", function()
-		scroll_preview(s, page_delta(0.5))
-	end, { buffer = preview_buf, silent = true })
-	vim.keymap.set("n", "<C-u>", function()
-		scroll_preview(s, -page_delta(0.5))
-	end, { buffer = preview_buf, silent = true })
 
 	s.timer = vim.uv.new_timer()
 	s.group = vim.api.nvim_create_augroup("EdocviewSession", { clear = true })
@@ -496,26 +437,12 @@ function M.open()
 			vim.bo[preview_buf].modified = false
 		end,
 	})
-	vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
-		group = s.group,
-		buffer = source_buf,
-		callback = function()
-			if not s.syncing then
-				set_preview_fraction(s, source_cursor_fraction(s))
-			end
-		end,
-	})
 	vim.api.nvim_create_autocmd("WinScrolled", {
 		group = s.group,
 		callback = function(args)
-			if s.syncing then
-				return
-			end
 			local win = tonumber(args.match or args.file)
 			if win == source_win then
-				set_preview_fraction(s, source_view_fraction(s))
-			elseif win == preview_win then
-				set_source_fraction(s, preview_view_fraction(s))
+				queue_preview_fraction(s, source_view_fraction(s))
 			end
 		end,
 	})

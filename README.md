@@ -6,8 +6,9 @@ terminals: no browser, web server, or external preview window is involved.
 
 The preview opens automatically for saved Markdown, LaTeX, Typst, and PDF
 files. Markdown supports TeX math through Pandoc. Editing triggers a debounced
-rebuild. Pages are rasterized once per rebuild and retained by Kitty; cursor and
-scroll events only move the preview viewport instead of rerasterizing it.
+rebuild. Pages are rasterized once per rebuild and retained by Kitty. The right
+split is a fixed, single-image viewport: source scrolling selects and pans the
+visible page without turning the preview into a scrollable Vim buffer.
 
 ## Features
 
@@ -17,8 +18,9 @@ scroll events only move the preview viewport instead of rerasterizing it.
 - PDF (`.pdf`)
 - Automatic right-side preview
 - Hot reload after buffer edits
-- Bidirectional source/preview scroll synchronization
-- Preview-side scrolling with `j`, `k`, `Ctrl-D`, `Ctrl-U`, or the mouse wheel
+- Source-driven preview synchronization; cursor motion alone does not make the
+  preview jump
+- A non-scrollable preview pane that displays only one page image at a time
 - Saving from either split always writes the source document; the preview is an
   unlisted, read-only synthetic buffer
 - XeLaTeX compilation for complete documents and automatically wrapped LaTeX
