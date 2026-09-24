@@ -6,8 +6,8 @@ terminals: no browser, web server, or external preview window is involved.
 
 The preview opens automatically for saved Markdown, LaTeX, Typst, and PDF
 files. Markdown supports TeX math through Pandoc. Editing triggers a debounced
-rebuild, and moving or scrolling in the source buffer moves the rendered
-viewport to the corresponding proportional position in the document.
+rebuild. Pages are rasterized once per rebuild and retained by Kitty; cursor and
+scroll events only move the preview viewport instead of rerasterizing it.
 
 ## Features
 
@@ -17,8 +17,12 @@ viewport to the corresponding proportional position in the document.
 - PDF (`.pdf`)
 - Automatic right-side preview
 - Hot reload after buffer edits
-- Source cursor and scroll synchronization
+- Bidirectional source/preview scroll synchronization
 - Preview-side scrolling with `j`, `k`, `Ctrl-D`, `Ctrl-U`, or the mouse wheel
+- Saving from either split always writes the source document; the preview is an
+  unlisted, read-only synthetic buffer
+- XeLaTeX compilation for complete documents and automatically wrapped LaTeX
+  fragments
 - A reproducible Nix flake with a standalone NixVim package and check
 
 ## Requirements
@@ -26,9 +30,9 @@ viewport to the corresponding proportional position in the document.
 - Neovim 0.10 or newer
 - A terminal implementing the Kitty graphics protocol, such as Ghostty
 - [`image.nvim`](https://github.com/3rd/image.nvim)
-- Python with PyMuPDF and Pillow
+- Python with PyMuPDF
 - ImageMagick
-- Pandoc and XeLaTeX for Markdown
+- Pandoc and Typst for fast Markdown rendering (with an XeLaTeX fallback)
 - Typst for `.typ` sources
 - `latexmk` and a TeX distribution for LaTeX
 
@@ -77,9 +81,10 @@ require("image").setup({
 
 require("edocview").setup({
   auto_open = true,
-  debounce = 300,
+  debounce = 500,
   pixels_per_column = 9,
   pixels_per_row = 18,
+  page_gap = 1,
 })
 ```
 
@@ -95,8 +100,8 @@ Scroll synchronization maps the source line's relative position to the rendered
 document's relative position. It can therefore drift from the exact output
 paragraph, especially when figures, equations, or page breaks change the layout.
 The preview is rasterized, so rendered text cannot be selected and links are not
-interactive. Compilation errors are reported through `vim.notify`, while the
-last successful preview remains visible.
+interactive. Transient errors while typing keep the last successful preview
+without interrupting editing; errors are reported after an explicit save.
 
 ## License
 

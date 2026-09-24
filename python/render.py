@@ -1,12 +1,10 @@
-"""Compile documents and rasterize the visible part of a multipage PDF."""
+"""Compile documents and rasterize PDF pages for retained terminal images."""
+import hashlib
+import json
 import os
 import pathlib
 import subprocess
 import sys
-
-import fitz
-from PIL import Image
-
 
 def run(command, cwd, env=None, stdin=None):
     result = subprocess.run(
@@ -27,8 +25,36 @@ def compile_document(source, target, original):
     original = pathlib.Path(original).resolve()
     kind = source.suffix.lower()
     if kind in ('.md', '.markdown'):
-        run(['pandoc', str(source), '--from=gfm+tex_math_dollars',
-             '--resource-path=' + str(original), '--pdf-engine=xelatex', '-o', str(target)], original)
+        typst_command = [
+            'pandoc',
+            str(source),
+            '--from=gfm+tex_math_dollars',
+            '--resource-path=' + str(original),
+            '--pdf-engine=typst',
+            '-V',
+            'mainfont=Libertinus Serif',
+            '-o',
+            str(target),
+        ]
+        try:
+            run(typst_command, original)
+        except RuntimeError as error:
+            # Some minimal systems expose no fonts to Typst. Preserve a
+            # reliable XeLaTeX fallback without slowing the normal fast path.
+            if 'font fallback list must not be empty' not in str(error):
+                raise
+            run(
+                [
+                    'pandoc',
+                    str(source),
+                    '--from=gfm+tex_math_dollars',
+                    '--resource-path=' + str(original),
+                    '--pdf-engine=xelatex',
+                    '-o',
+                    str(target),
+                ],
+                original,
+            )
     elif kind == '.typ':
         # Stdin preserves unsaved text while --root keeps relative resources
         # anchored to the real document directory rather than the cache.
@@ -39,48 +65,74 @@ def compile_document(source, target, original):
         )
     elif kind == '.tex':
         env = dict(os.environ)
-        env['TEXINPUTS'] = str(original) + os.pathsep + env.get('TEXINPUTS', '')
-        run(['latexmk', '-pdf', '-interaction=nonstopmode', '-halt-on-error',
-             '-output-directory=' + str(source.parent), str(source)], original, env)
-        (source.parent / (source.stem + '.pdf')).replace(target)
+        env['TEXINPUTS'] = str(original) + '//' + os.pathsep + env.get('TEXINPUTS', '')
+        contents = source.read_text()
+        compile_source = source
+        if r'\documentclass' not in contents:
+            compile_source = source.parent / 'edocview-wrapper.tex'
+            compile_source.write_text(
+                '\\documentclass{article}\n'
+                '\\usepackage{amsmath,amssymb}\n'
+                '\\usepackage{graphicx}\n'
+                '\\usepackage{hyperref}\n'
+                '\\begin{document}\n'
+                + contents
+                + '\n\\end{document}\n'
+            )
+        run(
+            [
+                'latexmk',
+                '-xelatex',
+                '-interaction=nonstopmode',
+                '-halt-on-error',
+                '-file-line-error',
+                '-output-directory=' + str(source.parent),
+                str(compile_source),
+            ],
+            original,
+            env,
+        )
+        (source.parent / (compile_source.stem + '.pdf')).replace(target)
     else:
         raise ValueError('unsupported format: ' + kind)
 
 
-def viewport(pdf, output, width, height, fraction):
+def pages(pdf, output_dir, width):
+    """Rasterize each page once for retained Kitty image placements."""
+    import fitz
+
     doc = fitz.open(pdf)
+    output_dir = pathlib.Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    width = int(width)
+    rendered = []
     try:
         if not doc.page_count:
             raise ValueError('empty PDF')
-        width, height = int(width), int(height)
-        fraction = max(0.0, min(1.0, float(fraction)))
-        dimensions = [(page.rect.width, page.rect.height) for page in doc]
-        heights = [round(h * width / w) for w, h in dimensions]
-        gap = max(8, round(width * .015))
-        whole = sum(heights) + gap * (len(heights) - 1)
-        offset = round(fraction * max(0, whole - height))
-        canvas = Image.new('RGB', (width, height), 'white')
-        top = 0
-        for index, ((page_width, _), page_height) in enumerate(zip(dimensions, heights)):
-            if top + page_height > offset and top < offset + height:
-                zoom = width / page_width
-                pix = doc[index].get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-                page = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
-                canvas.paste(page, (0, top - offset))
-            top += page_height + gap
-        canvas.save(output)
+        for index, page in enumerate(doc):
+            zoom = width / page.rect.width
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            path = (output_dir / f'page-{index + 1:04d}.png').resolve()
+            pixmap.save(path)
+            rendered.append({
+                'path': str(path),
+                'hash': hashlib.sha256(pixmap.samples).hexdigest(),
+                'width': pixmap.width,
+                'height': pixmap.height,
+            })
     finally:
         doc.close()
+    print(json.dumps(rendered))
 
 
 if __name__ == '__main__':
     try:
         if sys.argv[1] == 'compile':
             compile_document(*sys.argv[2:5])
-        elif sys.argv[1] == 'viewport':
-            viewport(*sys.argv[2:7])
+        elif sys.argv[1] == 'pages':
+            pages(*sys.argv[2:5])
         else:
-            raise ValueError('expected compile or viewport')
+            raise ValueError('expected compile or pages')
     except Exception as error:
         print(error, file=sys.stderr)
         sys.exit(1)

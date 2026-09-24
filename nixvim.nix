@@ -20,7 +20,6 @@
     pkgs.pandoc
     pkgs.typst
     (pkgs.python3.withPackages (pythonPackages: [
-      pythonPackages.pillow
       pythonPackages.pymupdf
     ]))
     (pkgs.texliveMedium.withPackages (texPackages: [ texPackages.latexmk ]))
