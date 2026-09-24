@@ -24,6 +24,9 @@ def concise_error(error):
     """Extract one useful compiler diagnostic instead of dumping its log."""
     text = str(error)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for line in lines:
+        if line.startswith('! LaTeX Error:'):
+            return line[2:][:800]
     for index, line in enumerate(lines):
         if re.search(r'\.tex:\d+:', line):
             return ' '.join(lines[index:index + 3])[:800]
@@ -113,7 +116,6 @@ def compile_document(source, target, original):
                 '\\documentclass{article}\n'
                 '\\usepackage{amsmath,amssymb}\n'
                 '\\usepackage{graphicx}\n'
-                '\\usepackage{hyperref}\n'
                 '\\begin{document}\n'
                 + contents
                 + '\n\\end{document}\n'
