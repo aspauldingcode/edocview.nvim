@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "diagramNixpkgs": {
+      "locked": {
+        "lastModified": 1789286504,
+        "narHash": "sha256-eiEK7cKZORNEvX0GeF3RtNEF/JXhgf2RqSp3230q13E=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "ef34387ddd751e1ab8857adf4676492d32eb24ec",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "ef34387ddd751e1ab8857adf4676492d32eb24ec",
+        "type": "github"
+      }
+    },
     "flake-parts": {
       "inputs": {
         "nixpkgs-lib": [
@@ -75,6 +91,7 @@
     },
     "root": {
       "inputs": {
+        "diagramNixpkgs": "diagramNixpkgs",
         "nixpkgs": "nixpkgs",
         "nixvim": "nixvim"
       }

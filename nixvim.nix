@@ -1,5 +1,25 @@
-{ self, nixpkgs }:
+{ self, nixpkgs, diagramNixpkgs }:
 { pkgs, ... }:
+let
+  diagramPkgs = diagramNixpkgs.legacyPackages.${pkgs.stdenv.hostPlatform.system};
+  chromium = diagramPkgs.playwright-driver.selectBrowsers {
+    withChromium = false;
+    withChromiumHeadlessShell = true;
+    withFfmpeg = false;
+    withFirefox = false;
+    withWebkit = false;
+  };
+  mermaidCli = pkgs.writeShellScriptBin "mmdc" ''
+    browser="$(${pkgs.findutils}/bin/find -L ${chromium} -type f \
+      -name chrome-headless-shell -print -quit)"
+    if [ -z "$browser" ]; then
+      echo "edocview: bundled Chromium executable not found" >&2
+      exit 1
+    fi
+    export PUPPETEER_EXECUTABLE_PATH="$browser"
+    exec ${diagramPkgs.mermaid-cli}/bin/mmdc "$@"
+  '';
+in
 {
   # The flake intentionally exposes a standalone NixVim build. Make its
   # package source explicit so NixVim does not warn about flake input wiring.
@@ -17,6 +37,8 @@
 
   extraPackages = [
     pkgs.imagemagick
+    pkgs.graphviz
+    mermaidCli
     pkgs.pandoc
     pkgs.typst
     (pkgs.python3.withPackages (pythonPackages: [

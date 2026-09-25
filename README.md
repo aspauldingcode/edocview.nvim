@@ -13,7 +13,8 @@ turning the preview into a scrollable Vim buffer.
 
 ## Features
 
-- Markdown (`.md`, `.markdown`), including TeX math
+- Markdown (`.md`, `.markdown`), including TeX math, local images, Mermaid,
+  and Graphviz diagrams
 - LaTeX (`.tex`)
 - Typst (`.typ`)
 - PDF (`.pdf`)
@@ -39,10 +40,33 @@ turning the preview into a scrollable Vim buffer.
 - Python with PyMuPDF and WeasyPrint
 - ImageMagick
 - Pandoc and Typst for fast Markdown rendering (with an XeLaTeX fallback)
+- Graphviz and Mermaid CLI with a headless Chromium runtime for fenced diagrams
 - Typst for `.typ` sources
 - `latexmk` and a TeX distribution for LaTeX
 
 The included Nix configuration provides every command and Python package above.
+
+## Markdown diagrams
+
+Standard Markdown images resolve relative to the document. Mermaid and Graphviz
+fences are rendered automatically:
+
+````markdown
+```mermaid
+flowchart LR
+    Source --> Preview
+```
+
+```dot
+digraph G {
+    edit -> render -> display;
+}
+```
+````
+
+The `dot`, `dotviz`, and `graphviz` fence names all select Graphviz. Rendered
+SVGs are cached by diagram content, so editing prose does not restart the
+diagram renderers.
 
 ## Try it with Nix
 

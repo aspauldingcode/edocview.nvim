@@ -172,17 +172,109 @@ def latex_body_is_empty(contents):
     return not body.strip()
 
 
+def diagram_language(info):
+    """Return a supported renderer name from a Markdown fence info string."""
+    info = info.strip().lower()
+    if not info:
+        return None
+    tokens = re.findall(r'[.\w+-]+', info) if info.startswith('{') else info.split()[:1]
+    for token in tokens:
+        language = token.lstrip('.')
+        if language in ('mermaid', 'dot', 'dotviz', 'graphviz'):
+            return language
+    return None
+
+
+def render_diagram(language, contents, directory):
+    """Render one fenced diagram to a content-addressed SVG."""
+    renderer = 'mermaid' if language == 'mermaid' else 'graphviz'
+    renderer_version = 'svg-labels-v2' if renderer == 'mermaid' else 'v1'
+    digest = hashlib.sha256(
+        (renderer + '\0' + renderer_version + '\0' + contents).encode()
+    ).hexdigest()[:20]
+    suffix = '.mmd' if renderer == 'mermaid' else '.dot'
+    source = directory / f'edocview-{renderer}-{digest}{suffix}'
+    target = directory / f'edocview-{renderer}-{digest}.svg'
+    if target.exists() and target.stat().st_size:
+        return target
+
+    source.write_text(contents)
+    if renderer == 'mermaid':
+        config = directory / 'edocview-mermaid-config.json'
+        config.write_text('{"htmlLabels":false,"securityLevel":"strict"}')
+        command = [
+            'mmdc',
+            '--input',
+            str(source),
+            '--output',
+            str(target),
+            '--backgroundColor',
+            'transparent',
+            '--configFile',
+            str(config),
+            '--quiet',
+        ]
+    else:
+        command = ['dot', '-Tsvg', str(source), '-o', str(target)]
+    try:
+        run(command, directory)
+    except FileNotFoundError as error:
+        raise RuntimeError(f'{renderer} renderer is not installed') from error
+    except RuntimeError as error:
+        raise RuntimeError(f'{renderer} diagram: {concise_error(error)}') from error
+    return target
+
+
+def preprocess_markdown(source):
+    """Replace Mermaid and Graphviz fences with cached rendered images."""
+    lines = source.read_text().splitlines(keepends=True)
+    rendered = []
+    index = 0
+    changed = False
+    while index < len(lines):
+        opening = re.match(r'^([ \t]*)(`{3,}|~{3,})[ \t]*(.*?)[ \t]*\r?\n?$', lines[index])
+        language = diagram_language(opening.group(3)) if opening else None
+        if not opening or not language:
+            rendered.append(lines[index])
+            index += 1
+            continue
+
+        marker = opening.group(2)[0]
+        minimum = len(opening.group(2))
+        closing = re.compile(r'^[ \t]*' + re.escape(marker) + r'{' + str(minimum) + r',}[ \t]*\r?\n?$')
+        end = index + 1
+        while end < len(lines) and not closing.match(lines[end]):
+            end += 1
+        if end == len(lines):
+            rendered.append(lines[index])
+            index += 1
+            continue
+
+        diagram = render_diagram(language, ''.join(lines[index + 1:end]), source.parent)
+        rendered.append(f'![{language} diagram]({diagram.name})\n')
+        index = end + 1
+        changed = True
+
+    if not changed:
+        return source
+    processed = source.parent / 'edocview-markdown.md'
+    processed.write_text(''.join(rendered))
+    return processed
+
+
 def compile_document(source, target, original):
     source = pathlib.Path(source).resolve()
     target = pathlib.Path(target).resolve()
     original = pathlib.Path(original).resolve()
     kind = source.suffix.lower()
     if kind in ('.md', '.markdown'):
+        markdown = preprocess_markdown(source)
+        resource_path = os.pathsep.join((str(original), str(source.parent)))
         typst_command = [
             'pandoc',
-            str(source),
+            str(markdown),
             '--from=gfm+tex_math_dollars',
-            '--resource-path=' + str(original),
+            '--resource-path=' + resource_path,
             '--pdf-engine=typst',
             '-V',
             'mainfont=Libertinus Serif',
@@ -199,9 +291,9 @@ def compile_document(source, target, original):
             run(
                 [
                     'pandoc',
-                    str(source),
+                    str(markdown),
                     '--from=gfm+tex_math_dollars',
-                    '--resource-path=' + str(original),
+                    '--resource-path=' + resource_path,
                     '--pdf-engine=xelatex',
                     '-o',
                     str(target),

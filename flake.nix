@@ -3,12 +3,16 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    # Mermaid's Puppeteer runtime currently fails with the newer Chromium in
+    # unstable on Darwin. Keep its browser/runtime pair independently pinned.
+    diagramNixpkgs.url = "github:NixOS/nixpkgs/ef34387ddd751e1ab8857adf4676492d32eb24ec";
     nixvim.url = "github:nix-community/nixvim";
   };
 
   outputs =
     inputs@{
       self,
+      diagramNixpkgs,
       nixpkgs,
       nixvim,
       ...
@@ -33,7 +37,7 @@
       };
     in
     {
-      nixvimModules.default = import ./nixvim.nix { inherit self nixpkgs; };
+      nixvimModules.default = import ./nixvim.nix { inherit self nixpkgs diagramNixpkgs; };
 
       packages = forAllSystems (
         system:
