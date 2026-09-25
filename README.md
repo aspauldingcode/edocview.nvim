@@ -17,7 +17,8 @@ turning the preview into a scrollable Vim buffer.
 - LaTeX (`.tex`)
 - Typst (`.typ`)
 - PDF (`.pdf`)
-- HTML (`.html`, `.htm`), including local CSS, fonts, and images
+- HTML (`.html`, `.htm`), including local CSS, fonts, and images, with wide
+  browser layouts reflowed to the preview page width
 - Automatic right-side preview
 - Hot reload after buffer edits
 - Source-driven preview synchronization; cursor motion alone does not make the
@@ -111,8 +112,10 @@ The preview is rasterized, so rendered text cannot be selected and links are not
 interactive. Transient errors while typing keep the last successful preview
 without interrupting editing; errors are reported after an explicit save.
 HTML is rendered as a print document by WeasyPrint. Local CSS, fonts, images,
-and `data:` resources are supported. Browser JavaScript and remote network
-resources are not loaded, keeping previews fast and deterministic.
+and `data:` resources are supported. A print-only responsive override constrains
+wide tables and media to the page so the terminal preview can fit the complete
+HTML width. Browser JavaScript and remote network resources are not loaded,
+keeping previews fast and deterministic.
 Empty and definition-only LaTeX sources render as a blank page instead of
 surfacing `latexmk`'s zero-page error. `cisXXX.cls` is a custom class rather
 than a TeX Live package. When it is absent, edocview uses a preview-only

@@ -9,6 +9,72 @@ import sys
 import urllib.parse
 
 
+HTML_PREVIEW_CSS = r'''
+@page {
+    size: A4 portrait;
+    margin: 10mm;
+}
+
+html,
+body {
+    box-sizing: border-box;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+}
+
+body {
+    margin: 0 !important;
+    overflow-wrap: anywhere;
+}
+
+body > *,
+table,
+tbody,
+thead,
+tfoot,
+tr,
+th,
+td {
+    box-sizing: border-box;
+    min-width: 0 !important;
+    max-width: 100% !important;
+}
+
+table {
+    width: 100% !important;
+    table-layout: auto !important;
+}
+
+table[width],
+th[width],
+td[width] {
+    width: auto !important;
+}
+
+th,
+td {
+    overflow-wrap: anywhere;
+    word-break: normal;
+}
+
+img,
+svg,
+video,
+canvas,
+iframe {
+    max-width: 100% !important;
+    height: auto !important;
+}
+
+pre,
+code {
+    white-space: pre-wrap !important;
+    overflow-wrap: anywhere;
+}
+'''
+
+
 def install_cisxxx_fallback(directory):
     """Provide a preview-only substitute for the missing UPenn template class."""
     (directory / 'cisXXX.cls').write_text(
@@ -151,7 +217,7 @@ def compile_document(source, target, original):
             stdin=source.read_text(),
         )
     elif kind in ('.html', '.htm'):
-        from weasyprint import HTML, default_url_fetcher
+        from weasyprint import CSS, HTML, default_url_fetcher
 
         def local_url_fetcher(url):
             """Keep editor previews deterministic and independent of the network."""
@@ -166,7 +232,7 @@ def compile_document(source, target, original):
             string=source.read_text(),
             base_url=str(original),
             url_fetcher=local_url_fetcher,
-        ).write_pdf(target)
+        ).write_pdf(target, stylesheets=[CSS(string=HTML_PREVIEW_CSS)])
     elif kind == '.tex':
         env = dict(os.environ)
         contents = source.read_text()
