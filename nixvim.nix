@@ -21,7 +21,10 @@
     pkgs.typst
     (pkgs.python3.withPackages (pythonPackages: [
       pythonPackages.pymupdf
-      pythonPackages.weasyprint
+      (if pkgs.stdenv.hostPlatform.isDarwin then
+        pythonPackages.weasyprint.overridePythonAttrs (_: { doCheck = false; })
+      else
+        pythonPackages.weasyprint)
     ]))
     (pkgs.texliveMedium.withPackages (texPackages: [ texPackages.latexmk ]))
   ];
