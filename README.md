@@ -106,9 +106,10 @@ The preview is rasterized, so rendered text cannot be selected and links are not
 interactive. Transient errors while typing keep the last successful preview
 without interrupting editing; errors are reported after an explicit save.
 Empty and definition-only LaTeX sources render as a blank page instead of
-surfacing `latexmk`'s zero-page error. Custom document classes such as
-`cisXXX.cls` must be stored beside the source document (or otherwise be
-available to TeX); missing classes are reported with a short actionable error.
+surfacing `latexmk`'s zero-page error. `cisXXX.cls` is a custom class rather
+than a TeX Live package. When it is absent, edocview uses a preview-only
+compatibility class for its standard homework commands. A real `cisXXX.cls`
+beside the document always takes precedence, and the source is never changed.
 
 ## License
 

@@ -7,6 +7,46 @@ import re
 import subprocess
 import sys
 
+
+def install_cisxxx_fallback(directory):
+    """Provide a preview-only substitute for the missing UPenn template class."""
+    (directory / 'cisXXX.cls').write_text(
+        r'''\NeedsTeXFormat{LaTeX2e}
+\ProvidesClass{cisXXX}[2026/09/24 edocview preview compatibility]
+\LoadClass[11pt]{article}
+\RequirePackage[margin=1in]{geometry}
+\RequirePackage{amsmath,amssymb}
+\newcommand{\edocviewHWauthor}{}
+\newcommand{\edocviewHWemail}{}
+\newcommand{\edocviewHWnumber}{}
+\newcommand{\edocviewHWcourse}{CIS}
+\newcommand{\edocviewHWpartners}{}
+\newcommand{\HWauthor}[2]{\renewcommand{\edocviewHWauthor}{#1}\renewcommand{\edocviewHWemail}{#2}}
+\newcommand{\HWno}[1]{\renewcommand{\edocviewHWnumber}{#1}}
+\newcommand{\HWcourse}[1]{\renewcommand{\edocviewHWcourse}{#1}}
+\newcommand{\HWpartner}[1]{\g@addto@macro\edocviewHWpartners{#1\\}}
+\newcommand{\HWextension}{}
+\newcounter{edocviewproblem}
+\newcounter{edocviewsubproblem}[edocviewproblem]
+\newcommand{\HWproblem}{%
+  \stepcounter{edocviewproblem}%
+  \setcounter{edocviewsubproblem}{0}%
+  \section*{Problem \theedocviewproblem}}
+\newcommand{\HWsubproblem}{%
+  \stepcounter{edocviewsubproblem}%
+  \subsection*{\alph{edocviewsubproblem})}}
+\renewcommand{\maketitle}{%
+  \begin{center}
+    {\Large\bfseries
+      \edocviewHWcourse{} Homework \edocviewHWnumber\par}
+    \vspace{0.5em}
+    \edocviewHWauthor{} \texttt{\edocviewHWemail}\par
+    \edocviewHWpartners
+  \end{center}\vspace{1em}}
+'''
+    )
+
+
 def run(command, cwd, env=None, stdin=None):
     result = subprocess.run(
         command,
@@ -111,8 +151,25 @@ def compile_document(source, target, original):
         )
     elif kind == '.tex':
         env = dict(os.environ)
-        env['TEXINPUTS'] = str(original) + '//' + os.pathsep + env.get('TEXINPUTS', '')
         contents = source.read_text()
+        document_class = re.search(
+            r'\\documentclass(?:\[[^]]*\])?\{([^}]+)\}', contents
+        )
+        if (
+            document_class
+            and document_class.group(1) == 'cisXXX'
+            and not (original / 'cisXXX.cls').exists()
+        ):
+            install_cisxxx_fallback(source.parent)
+        env['TEXINPUTS'] = (
+            str(source.parent)
+            + '//'
+            + os.pathsep
+            + str(original)
+            + '//'
+            + os.pathsep
+            + env.get('TEXINPUTS', '')
+        )
         compile_source = source
         if r'\documentclass' not in contents:
             compile_source = source.parent / 'edocview-wrapper.tex'
