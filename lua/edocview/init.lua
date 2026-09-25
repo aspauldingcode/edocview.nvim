@@ -21,7 +21,7 @@ local function error_message(message)
 end
 
 local function show_status(s, title, detail)
-	if not valid(s) or s.pdf then
+	if not valid(s) or s.pdf or s.image then
 		return
 	end
 	vim.bo[s.preview_buf].modifiable = true
@@ -31,7 +31,7 @@ local function show_status(s, title, detail)
 end
 
 local function clear_status(s)
-	if not valid(s) then
+	if not valid(s) or s.image then
 		return
 	end
 	vim.bo[s.preview_buf].modifiable = true
@@ -94,14 +94,17 @@ local function set_preview_fraction(s, fraction)
 	if s.image == selected.image and s.page_offset == offset then
 		return
 	end
-	if s.image and s.image ~= selected.image then
-		pcall(s.image.clear, s.image, true)
-	end
+	local previous = s.image
 	selected.image.render_offset_top = -offset
 	selected.image:render({ x = 0, y = 0, width = s.rendered_cols })
 	s.image = selected.image
 	s.page_offset = offset
 	s.view_fraction = fraction
+	-- Keep the previous Kitty placement visible until its replacement has
+	-- rendered. Clearing first exposes the terminal background as a flash.
+	if previous and previous ~= selected.image then
+		pcall(previous.clear, previous, true)
+	end
 end
 
 local function queue_preview_fraction(s, fraction)
@@ -175,6 +178,7 @@ local function render_pages(s)
 
 					local old_cache = s.page_cache or {}
 					local new_cache = {}
+					local stale_images = {}
 					for index, page in ipairs(page_layout) do
 						local cached = old_cache[index]
 						local image
@@ -182,7 +186,7 @@ local function render_pages(s)
 							image = cached.image
 						else
 							if cached and cached.image then
-								pcall(cached.image.clear, cached.image)
+								stale_images[#stale_images + 1] = cached.image
 							end
 							image = require("image").from_file(page.path, {
 								id = string.format("edocview-%d-%d-%s", s.source_buf, index, page.hash:sub(1, 12)),
@@ -211,17 +215,18 @@ local function render_pages(s)
 					end
 					for index = #page_layout + 1, #old_cache do
 						if old_cache[index] and old_cache[index].image then
-							pcall(old_cache[index].image.clear, old_cache[index].image)
+							stale_images[#stale_images + 1] = old_cache[index].image
 						end
-					end
-					if s.image then
-						pcall(s.image.clear, s.image, true)
 					end
 					s.page_cache = new_cache
 					s.page_layout = page_layout
-					s.image = nil
 					s.page_offset = nil
 					set_preview_fraction(s, source_view_fraction(s))
+					for _, image in ipairs(stale_images) do
+						if image ~= s.image then
+							pcall(image.clear, image, true)
+						end
+					end
 				end
 			end
 
