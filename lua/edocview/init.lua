@@ -301,7 +301,10 @@ function M.stop()
 	end
 	clear_images(s)
 	if vim.api.nvim_win_is_valid(s.preview_win) then
-		vim.api.nvim_win_close(s.preview_win, true)
+		-- The source may have been the other window and its WinClosed callback
+		-- runs later. In that case the preview is now Neovim's last window and
+		-- E444 is expected; deleting its scratch buffer below is sufficient.
+		pcall(vim.api.nvim_win_close, s.preview_win, true)
 	end
 	if vim.api.nvim_buf_is_valid(s.preview_buf) then
 		pcall(vim.api.nvim_buf_delete, s.preview_buf, { force = true })

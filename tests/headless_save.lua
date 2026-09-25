@@ -41,3 +41,15 @@ assert(saved:find("save%-forwarded%-from%-preview"), "preview write did not save
 assert(pcall(vim.cmd.quit), "closing the preview must not be aborted by autocommands")
 vim.wait(20)
 edocview.stop()
+
+-- Closing the source first leaves the preview as Neovim's last window. The
+-- deferred WinClosed cleanup must remove the scratch buffer without E444.
+vim.cmd.edit(vim.fn.fnameescape(source))
+edocview.open()
+local source_window = vim.fn.bufwinid(vim.fn.bufnr(source))
+assert(source_window ~= -1, "source window was not found")
+vim.v.errmsg = ""
+assert(pcall(vim.api.nvim_win_close, source_window, true), "closing the source must succeed")
+vim.wait(50)
+assert(not vim.v.errmsg:find("E444", 1, true), "cleanup tried to close Neovim's last window")
+edocview.stop()
