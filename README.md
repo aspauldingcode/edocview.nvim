@@ -91,6 +91,8 @@ require("edocview").setup({
   pixels_per_row = 18,
   page_gap = 1,
   scroll_interval = 16,
+  compile_timeout = 30000,
+  raster_timeout = 30000,
 })
 ```
 
@@ -108,8 +110,9 @@ paragraph, especially when figures, equations, or page breaks change the layout.
 The preview is rasterized, so rendered text cannot be selected and links are not
 interactive. Transient errors while typing keep the last successful preview
 without interrupting editing; errors are reported after an explicit save.
-HTML is rendered as a print document by WeasyPrint; CSS is supported, but
-browser JavaScript is not executed.
+HTML is rendered as a print document by WeasyPrint. Local CSS, fonts, images,
+and `data:` resources are supported. Browser JavaScript and remote network
+resources are not loaded, keeping previews fast and deterministic.
 Empty and definition-only LaTeX sources render as a blank page instead of
 surfacing `latexmk`'s zero-page error. `cisXXX.cls` is a custom class rather
 than a TeX Live package. When it is absent, edocview uses a preview-only

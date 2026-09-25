@@ -6,6 +6,8 @@ local opts = {
 	pixels_per_row = 18,
 	page_gap = 1,
 	scroll_interval = 16,
+	compile_timeout = 30000,
+	raster_timeout = 30000,
 	auto_open = true,
 }
 local session
@@ -22,13 +24,43 @@ local function error_message(message)
 end
 
 local function show_status(s, title, detail)
-	if not valid(s) or s.pdf or s.image then
+	if not valid(s) or s.image then
 		return
 	end
 	vim.bo[s.preview_buf].modifiable = true
 	vim.api.nvim_buf_set_lines(s.preview_buf, 0, -1, false, { title, "", detail or "" })
 	vim.bo[s.preview_buf].modifiable = false
 	vim.bo[s.preview_buf].modified = false
+end
+
+local function system_async(command, timeout, callback)
+	local settled = false
+	local timer = vim.uv.new_timer()
+	local job
+	local function finish(result)
+		if settled then
+			return
+		end
+		settled = true
+		pcall(timer.stop, timer)
+		if not timer:is_closing() then
+			pcall(timer.close, timer)
+		end
+		callback(result)
+	end
+	job = vim.system(command, { text = true }, finish)
+	timer:start(timeout, 0, function()
+		if settled then
+			return
+		end
+		pcall(job.kill, job, 15)
+		finish({
+			code = 124,
+			stdout = "",
+			stderr = string.format("preview command timed out after %.0f seconds", timeout / 1000),
+		})
+	end)
+	return job
 end
 
 local function clear_status(s)
@@ -215,98 +247,120 @@ local function render_pages(s)
 	local output_dir = string.format("%s/pages-%d", s.dir, serial)
 	local cell_width, cell_height = terminal_cell_size()
 	local pixel_width = math.max(1, math.floor(cols * cell_width))
+	show_status(s, "Rendering…", "Preparing preview pages")
 
-	vim.system({ "python3", script, "pages", pdf, output_dir, tostring(pixel_width) }, { text = true }, function(result)
-		vim.schedule(function()
-			s.rasterizing = false
-			if not valid(s) then
-				return
-			end
-			if result.code ~= 0 and s.pdf == pdf then
-				error_message((result.stderr or result.stdout or "page rasterization failed"):sub(-1600))
-			elseif serial == s.render_serial and s.pdf == pdf and preview_width(s) == cols then
-				local ok, pages = pcall(vim.json.decode, result.stdout)
-				if not ok or type(pages) ~= "table" or #pages == 0 then
-					error_message("page rasterizer returned no pages")
-				else
-					local page_layout = {}
-					local total_rows = 0
-					for _, page in ipairs(pages) do
-						local page_rows = math.max(1, math.ceil(page.height / cell_height))
-						page_layout[#page_layout + 1] = {
-							path = page.path,
-							hash = page.hash,
-							row = total_rows,
-							height = page_rows,
-						}
-						total_rows = total_rows + page_rows + opts.page_gap
-					end
-					s.total_rows = math.max(1, total_rows - opts.page_gap)
-					s.rendered_pdf = s.pdf
-					s.rendered_cols = cols
-					clear_status(s)
+	system_async(
+		{ "python3", script, "pages", pdf, output_dir, tostring(pixel_width) },
+		opts.raster_timeout,
+		function(result)
+			vim.schedule(function()
+				s.rasterizing = false
+				if not valid(s) then
+					return
+				end
+				if result.code ~= 0 and s.pdf == pdf then
+					local message = (result.stderr or result.stdout or "page rasterization failed"):sub(-1600)
+					show_status(s, "Preview unavailable", message)
+					error_message(message)
+				elseif serial == s.render_serial and s.pdf == pdf and preview_width(s) == cols then
+					local ok, pages = pcall(vim.json.decode, result.stdout)
+					if not ok or type(pages) ~= "table" or #pages == 0 then
+						local message = "page rasterizer returned no pages"
+						show_status(s, "Preview unavailable", message)
+						error_message(message)
+					else
+						local page_layout = {}
+						local total_rows = 0
+						for _, page in ipairs(pages) do
+							local page_rows = math.max(1, math.ceil(page.height / cell_height))
+							page_layout[#page_layout + 1] = {
+								path = page.path,
+								hash = page.hash,
+								row = total_rows,
+								height = page_rows,
+							}
+							total_rows = total_rows + page_rows + opts.page_gap
+						end
+						s.total_rows = math.max(1, total_rows - opts.page_gap)
+						s.rendered_pdf = s.pdf
+						s.rendered_cols = cols
+						clear_status(s)
 
-					local old_cache = s.page_cache or {}
-					local new_cache = {}
-					local stale_images = {}
-					for index, page in ipairs(page_layout) do
-						local cached = old_cache[index]
-						local image
-						if cached and cached.hash == page.hash and cached.height == page.height then
-							image = cached.image
-						else
-							if cached and cached.image then
-								stale_images[#stale_images + 1] = cached.image
+						local old_cache = s.page_cache or {}
+						local new_cache = {}
+						local stale_images = {}
+						for index, page in ipairs(page_layout) do
+							local cached = old_cache[index]
+							local image
+							if cached and cached.hash == page.hash and cached.height == page.height then
+								image = cached.image
+							else
+								if cached and cached.image then
+									stale_images[#stale_images + 1] = cached.image
+								end
+								local ok_image
+								ok_image, image = pcall(require("image").from_file, page.path, {
+									id = string.format("edocview-%d-%d-%s", s.source_buf, index, page.hash:sub(1, 12)),
+									window = s.preview_win,
+									buffer = s.preview_buf,
+									x = 0,
+									y = 0,
+									width = cols,
+									inline = false,
+									with_virtual_padding = false,
+									namespace = "edocview",
+									max_width_window_percentage = 100,
+									ignore_global_max_size = true,
+								})
+								if not ok_image then
+									local message = "image renderer failed: " .. tostring(image)
+									show_status(s, "Preview unavailable", message)
+									error_message(message)
+									return
+								end
+								-- image.nvim currently declares this option but does not copy it
+								-- onto file-backed image instances. Set it explicitly so its
+								-- global height cap cannot defeat edocview's fit-width layout.
+								if image then
+									image.ignore_global_max_size = true
+								end
 							end
-							image = require("image").from_file(page.path, {
-								id = string.format("edocview-%d-%d-%s", s.source_buf, index, page.hash:sub(1, 12)),
-								window = s.preview_win,
-								buffer = s.preview_buf,
-								x = 0,
-								y = 0,
-								width = cols,
-								inline = false,
-								with_virtual_padding = false,
-								namespace = "edocview",
-								max_width_window_percentage = 100,
-								ignore_global_max_size = true,
-							})
-							-- image.nvim currently declares this option but does not copy it
-							-- onto file-backed image instances. Set it explicitly so its
-							-- global height cap cannot defeat edocview's fit-width layout.
 							if image then
-								image.ignore_global_max_size = true
+								page.image = image
+								new_cache[index] = page
 							end
 						end
-						if image then
-							page.image = image
-							new_cache[index] = page
+						if vim.tbl_isempty(new_cache) then
+							local message = "image renderer could not load the preview pages"
+							show_status(s, "Preview unavailable", message)
+							error_message(message)
+							return
 						end
-					end
-					for index = #page_layout + 1, #old_cache do
-						if old_cache[index] and old_cache[index].image then
-							stale_images[#stale_images + 1] = old_cache[index].image
+						for index = #page_layout + 1, #old_cache do
+							if old_cache[index] and old_cache[index].image then
+								stale_images[#stale_images + 1] = old_cache[index].image
+							end
 						end
-					end
-					s.page_cache = new_cache
-					s.page_layout = page_layout
-					s.page_offset = nil
-					s.placement_key = nil
-					set_preview_fraction(s, source_view_fraction(s))
-					for _, image in ipairs(stale_images) do
-						if image ~= s.image then
-							pcall(image.clear, image, true)
+						s.page_cache = new_cache
+						s.page_layout = page_layout
+						s.page_offset = nil
+						s.placement_key = nil
+						set_preview_fraction(s, source_view_fraction(s))
+						for _, image in ipairs(stale_images) do
+							if image ~= s.image then
+								pcall(image.clear, image, true)
+							end
 						end
 					end
 				end
-			end
 
-			if s.reraster then
-				s.reraster = false
-				render_pages(s)
-			end
-		end)
-	end)
+				if s.reraster then
+					s.reraster = false
+					render_pages(s)
+				end
+			end)
+		end
+	)
 end
 
 local function compile(s, report_error)
@@ -327,7 +381,7 @@ local function compile(s, report_error)
 	vim.fn.writefile(vim.api.nvim_buf_get_lines(s.source_buf, 0, -1, false), input)
 	local origin = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(s.source_buf), ":h")
 
-	vim.system({ "python3", script, "compile", input, pdf, origin }, { text = true }, function(result)
+	system_async({ "python3", script, "compile", input, pdf, origin }, opts.compile_timeout, function(result)
 		vim.schedule(function()
 			s.compiling = false
 			if not valid(s) then

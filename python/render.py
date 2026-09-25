@@ -6,6 +6,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import urllib.parse
 
 
 def install_cisxxx_fallback(directory):
@@ -150,11 +151,22 @@ def compile_document(source, target, original):
             stdin=source.read_text(),
         )
     elif kind in ('.html', '.htm'):
-        from weasyprint import HTML
+        from weasyprint import HTML, default_url_fetcher
+
+        def local_url_fetcher(url):
+            """Keep editor previews deterministic and independent of the network."""
+            scheme = urllib.parse.urlparse(url).scheme.lower()
+            if scheme not in ('', 'file', 'data'):
+                raise ValueError(f'remote HTML resource disabled: {url}')
+            return default_url_fetcher(url, timeout=2)
 
         # base_url keeps relative stylesheets, fonts, and images anchored to
         # the real document even though unsaved buffer text lives in a cache.
-        HTML(string=source.read_text(), base_url=str(original)).write_pdf(target)
+        HTML(
+            string=source.read_text(),
+            base_url=str(original),
+            url_fetcher=local_url_fetcher,
+        ).write_pdf(target)
     elif kind == '.tex':
         env = dict(os.environ)
         contents = source.read_text()
