@@ -31,13 +31,35 @@
         src = self;
         doCheck = false;
       };
+      mermaidCliFor = system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          diagramPkgs = diagramNixpkgs.legacyPackages.${system};
+          chromium = diagramPkgs.playwright-driver.selectBrowsers {
+            withChromium = false;
+            withChromiumHeadlessShell = true;
+            withFfmpeg = false;
+            withFirefox = false;
+            withWebkit = false;
+          };
+        in
+        pkgs.writeShellScriptBin "mmdc" ''
+          browser="$(${pkgs.findutils}/bin/find -L ${chromium} -type f \
+            -name chrome-headless-shell -print -quit)"
+          if [ -z "$browser" ]; then
+            echo "edocview: bundled Chromium executable not found" >&2
+            exit 1
+          fi
+          export PUPPETEER_EXECUTABLE_PATH="$browser"
+          exec ${diagramPkgs.mermaid-cli}/bin/mmdc "$@"
+        '';
       configurationFor = system: nixvim.lib.evalNixvim {
         inherit system;
         modules = [ self.nixvimModules.default ];
       };
     in
     {
-      nixvimModules.default = import ./nixvim.nix { inherit self nixpkgs diagramNixpkgs; };
+      nixvimModules.default = import ./nixvim.nix { inherit self nixpkgs mermaidCliFor; };
 
       packages = forAllSystems (
         system:
@@ -47,6 +69,7 @@
         in
         {
           default = configuration.config.build.package;
+          mermaidCli = mermaidCliFor system;
           plugin = pluginFor pkgs;
         }
       );
