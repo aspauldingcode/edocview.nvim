@@ -128,8 +128,13 @@ local function set_preview_fraction(s, fraction)
 	if not valid(s) or not s.total_rows or not s.page_layout then
 		return
 	end
-	fraction = math.max(0, math.min(1, fraction))
 	local geometry = preview_geometry(s)
+	-- WinResized clears rendered_cols while a replacement raster is queued.
+	-- Scrolling can still arrive during that short window, so retain the
+	-- currently visible page at the new viewport width instead of passing nil
+	-- into image.nvim's placement math.
+	local rendered_cols = tonumber(s.rendered_cols) or geometry.cols
+	fraction = math.max(0, math.min(1, tonumber(fraction) or tonumber(s.view_fraction) or 0))
 	local height = geometry.height
 	local top = math.floor(fraction * math.max(0, s.total_rows - height))
 	local selected = s.page_layout[#s.page_layout]
@@ -155,19 +160,23 @@ local function set_preview_fraction(s, fraction)
 	-- and each frame sends only a tiny placement update.
 	if not image.is_rendered or not image.bounds or not image.rendered_geometry then
 		image.render_offset_top = 0
-		image:render({ x = 0, y = 0, width = s.rendered_cols })
+		image:render({ x = 0, y = 0, width = rendered_cols })
 	end
 	local backend = image.global_state and image.global_state.backend
+	local rendered_width = tonumber(image.rendered_geometry and image.rendered_geometry.width)
+	local rendered_height = tonumber(image.rendered_geometry and image.rendered_geometry.height)
 	if
 		image.is_rendered
 		and image.bounds
 		and image.rendered_geometry
+		and rendered_width
+		and rendered_height
 		and backend
 		and backend.features
 		and backend.features.crop
 	then
-		local width = math.min(s.rendered_cols, image.rendered_geometry.width)
-		local image_height = image.rendered_geometry.height
+		local width = math.min(rendered_cols, rendered_width)
+		local image_height = rendered_height
 		local x = geometry.left
 		local y = geometry.top - offset
 		-- Keep edocview's placement bounded to the preview window. Also detach
@@ -196,7 +205,7 @@ local function set_preview_fraction(s, fraction)
 		}
 	else
 		-- Non-Kitty backends retain the old whole-page behavior.
-		image:render({ x = 0, y = 0, width = s.rendered_cols })
+		image:render({ x = 0, y = 0, width = rendered_cols })
 	end
 	s.image = selected.image
 	s.page_offset = offset
