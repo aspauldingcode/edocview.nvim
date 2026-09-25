@@ -149,6 +149,12 @@ def compile_document(source, target, original):
             original,
             stdin=source.read_text(),
         )
+    elif kind in ('.html', '.htm'):
+        from weasyprint import HTML
+
+        # base_url keeps relative stylesheets, fonts, and images anchored to
+        # the real document even though unsaved buffer text lives in a cache.
+        HTML(string=source.read_text(), base_url=str(original)).write_pdf(target)
     elif kind == '.tex':
         env = dict(os.environ)
         contents = source.read_text()

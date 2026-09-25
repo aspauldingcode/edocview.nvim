@@ -4,11 +4,12 @@
 the Kitty graphics protocol. It is designed for Ghostty and other compatible
 terminals: no browser, web server, or external preview window is involved.
 
-The preview opens automatically for saved Markdown, LaTeX, Typst, and PDF
+The preview opens automatically for saved Markdown, LaTeX, Typst, PDF, and HTML
 files. Markdown supports TeX math through Pandoc. Editing triggers a debounced
 rebuild. Pages are rasterized once per rebuild and retained by Kitty. The right
 split is a fixed, single-image viewport: source scrolling selects and pans the
-visible page without turning the preview into a scrollable Vim buffer.
+visible page through GPU-side crop placements without retransmitting it or
+turning the preview into a scrollable Vim buffer.
 
 ## Features
 
@@ -16,6 +17,7 @@ visible page without turning the preview into a scrollable Vim buffer.
 - LaTeX (`.tex`)
 - Typst (`.typ`)
 - PDF (`.pdf`)
+- HTML (`.html`, `.htm`), including local CSS, fonts, and images
 - Automatic right-side preview
 - Hot reload after buffer edits
 - Source-driven preview synchronization; cursor motion alone does not make the
@@ -33,7 +35,7 @@ visible page without turning the preview into a scrollable Vim buffer.
 - Neovim 0.10 or newer
 - A terminal implementing the Kitty graphics protocol, such as Ghostty
 - [`image.nvim`](https://github.com/3rd/image.nvim)
-- Python with PyMuPDF
+- Python with PyMuPDF and WeasyPrint
 - ImageMagick
 - Pandoc and Typst for fast Markdown rendering (with an XeLaTeX fallback)
 - Typst for `.typ` sources
@@ -88,6 +90,7 @@ require("edocview").setup({
   pixels_per_column = 9,
   pixels_per_row = 18,
   page_gap = 1,
+  scroll_interval = 16,
 })
 ```
 
@@ -105,6 +108,8 @@ paragraph, especially when figures, equations, or page breaks change the layout.
 The preview is rasterized, so rendered text cannot be selected and links are not
 interactive. Transient errors while typing keep the last successful preview
 without interrupting editing; errors are reported after an explicit save.
+HTML is rendered as a print document by WeasyPrint; CSS is supported, but
+browser JavaScript is not executed.
 Empty and definition-only LaTeX sources render as a blank page instead of
 surfacing `latexmk`'s zero-page error. `cisXXX.cls` is a custom class rather
 than a TeX Live package. When it is absent, edocview uses a preview-only

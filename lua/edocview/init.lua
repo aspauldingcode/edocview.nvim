@@ -5,6 +5,7 @@ local opts = {
 	pixels_per_column = 9,
 	pixels_per_row = 18,
 	page_gap = 1,
+	scroll_interval = 16,
 	auto_open = true,
 }
 local session
@@ -95,8 +96,34 @@ local function set_preview_fraction(s, fraction)
 		return
 	end
 	local previous = s.image
-	selected.image.render_offset_top = -offset
-	selected.image:render({ x = 0, y = 0, width = s.rendered_cols })
+	local image = selected.image
+	-- Prime a newly selected page once. Subsequent scrolling goes straight to
+	-- Kitty's crop-capable backend: the page stays resident in terminal memory
+	-- and each frame sends only a tiny placement update.
+	if not image.is_rendered or not image.bounds or not image.rendered_geometry then
+		image.render_offset_top = 0
+		image:render({ x = 0, y = 0, width = s.rendered_cols })
+	end
+	local backend = image.global_state and image.global_state.backend
+	if
+		image.is_rendered
+		and image.bounds
+		and image.rendered_geometry
+		and backend
+		and backend.features
+		and backend.features.crop
+	then
+		backend.render(
+			image,
+			image.bounds.left,
+			image.bounds.top - offset,
+			image.rendered_geometry.width,
+			image.rendered_geometry.height
+		)
+	else
+		-- Non-Kitty backends retain the old whole-page behavior.
+		image:render({ x = 0, y = 0, width = s.rendered_cols })
+	end
 	s.image = selected.image
 	s.page_offset = offset
 	s.view_fraction = fraction
@@ -121,7 +148,7 @@ local function queue_preview_fraction(s, fraction)
 		local pending = s.pending_fraction
 		s.pending_fraction = nil
 		set_preview_fraction(s, pending)
-	end, 8)
+	end, opts.scroll_interval)
 end
 
 local function render_pages(s)
@@ -325,7 +352,7 @@ function M.setup(config)
 	if opts.auto_open then
 		vim.api.nvim_create_autocmd("FileType", {
 			group = group,
-			pattern = { "markdown", "tex", "plaintex", "latex", "typst", "pdf" },
+			pattern = { "markdown", "tex", "plaintex", "latex", "typst", "pdf", "html" },
 			callback = function(args)
 				if vim.fn.fnamemodify(vim.api.nvim_buf_get_name(args.buf), ":e") == "" then
 					return
@@ -380,8 +407,11 @@ function M.open()
 	local source_buf = vim.api.nvim_get_current_buf()
 	local name = vim.api.nvim_buf_get_name(source_buf)
 	local ext = name:match("%.([^.]*)$")
-	if not ext or not ({ md = true, markdown = true, tex = true, typ = true, pdf = true })[ext] then
-		error("edocview: save a Markdown, LaTeX, Typst, or PDF file first")
+	if
+		not ext
+		or not ({ md = true, markdown = true, tex = true, typ = true, pdf = true, html = true, htm = true })[ext]
+	then
+		error("edocview: save a Markdown, LaTeX, Typst, PDF, or HTML file first")
 	end
 	if not pcall(require, "image") then
 		error("edocview: image.nvim is required")

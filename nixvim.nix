@@ -21,6 +21,7 @@
     pkgs.typst
     (pkgs.python3.withPackages (pythonPackages: [
       pythonPackages.pymupdf
+      pythonPackages.weasyprint
     ]))
     (pkgs.texliveMedium.withPackages (texPackages: [ texPackages.latexmk ]))
   ];
@@ -33,6 +34,7 @@
         integrations = {
           markdown = { enabled = false },
           typst = { enabled = false },
+          html = { enabled = false },
         },
       })
     end
