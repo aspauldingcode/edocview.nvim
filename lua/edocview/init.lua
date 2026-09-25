@@ -68,9 +68,28 @@ local function terminal_cell_size()
 	return opts.pixels_per_column, opts.pixels_per_row
 end
 
-local function preview_width(s)
+local function preview_geometry(s)
 	local info = vim.fn.getwininfo(s.preview_win)[1]
-	return math.max(1, info.width - info.textoff)
+	local cols = math.max(1, info.width - info.textoff)
+	local height = vim.api.nvim_win_get_height(s.preview_win)
+	-- screenpos() includes tablines, winbars, and gutters. Recompute it for
+	-- every placement instead of trusting image.nvim's cached bounds: its
+	-- global redraw handlers may have updated those bounds between frames.
+	local screen = vim.fn.screenpos(s.preview_win, 1, 1)
+	local left = screen.col > 0 and screen.col - 1 or info.wincol - 1 + info.textoff
+	local top = screen.row > 0 and screen.row - 1 or info.winrow - 1
+	return {
+		cols = cols,
+		height = height,
+		left = left,
+		top = top,
+		right = left + cols,
+		bottom = top + height - 1,
+	}
+end
+
+local function preview_width(s)
+	return preview_geometry(s).cols
 end
 
 local function set_preview_fraction(s, fraction)
@@ -78,7 +97,8 @@ local function set_preview_fraction(s, fraction)
 		return
 	end
 	fraction = math.max(0, math.min(1, fraction))
-	local height = vim.api.nvim_win_get_height(s.preview_win)
+	local geometry = preview_geometry(s)
+	local height = geometry.height
 	local top = math.floor(fraction * math.max(0, s.total_rows - height))
 	local selected = s.page_layout[#s.page_layout]
 	for _, page in ipairs(s.page_layout) do
@@ -92,7 +112,8 @@ local function set_preview_fraction(s, fraction)
 	end
 
 	local offset = math.max(0, math.min(math.max(0, selected.height - height), top - selected.row))
-	if s.image == selected.image and s.page_offset == offset then
+	local placement_key = table.concat({ geometry.left, geometry.top, geometry.cols, geometry.height }, ":")
+	if s.image == selected.image and s.page_offset == offset and s.placement_key == placement_key then
 		return
 	end
 	local previous = s.image
@@ -113,19 +134,41 @@ local function set_preview_fraction(s, fraction)
 		and backend.features
 		and backend.features.crop
 	then
-		backend.render(
-			image,
-			image.bounds.left,
-			image.bounds.top - offset,
-			image.rendered_geometry.width,
-			image.rendered_geometry.height
-		)
+		local width = math.min(s.rendered_cols, image.rendered_geometry.width)
+		local image_height = image.rendered_geometry.height
+		local x = geometry.left
+		local y = geometry.top - offset
+		-- Keep edocview's placement bounded to the preview window. Also detach
+		-- the prepared image from image.nvim's generic window redraw handlers;
+		-- edocview owns its lifecycle and placement from this point onward.
+		image.bounds = {
+			left = geometry.left,
+			right = geometry.right,
+			top = geometry.top,
+			bottom = geometry.bottom,
+		}
+		image.window = nil
+		image.buffer = nil
+		image.geometry.x = x
+		image.geometry.y = y
+		image.geometry.width = width
+		image.geometry.height = nil
+		backend.render(image, x, y, width, image_height)
+		-- Direct backend placement intentionally bypasses Image:render(), so
+		-- keep its bookkeeping aligned with the real terminal placement too.
+		image.rendered_geometry = {
+			x = x,
+			y = y,
+			width = width,
+			height = image_height,
+		}
 	else
 		-- Non-Kitty backends retain the old whole-page behavior.
 		image:render({ x = 0, y = 0, width = s.rendered_cols })
 	end
 	s.image = selected.image
 	s.page_offset = offset
+	s.placement_key = placement_key
 	s.view_fraction = fraction
 	-- Keep the previous Kitty placement visible until its replacement has
 	-- rendered. Clearing first exposes the terminal background as a flash.
@@ -248,6 +291,7 @@ local function render_pages(s)
 					s.page_cache = new_cache
 					s.page_layout = page_layout
 					s.page_offset = nil
+					s.placement_key = nil
 					set_preview_fraction(s, source_view_fraction(s))
 					for _, image in ipairs(stale_images) do
 						if image ~= s.image then
@@ -515,9 +559,28 @@ function M.open()
 	vim.api.nvim_create_autocmd("WinResized", {
 		group = s.group,
 		callback = function()
-			if valid(s) and s.rendered_cols ~= preview_width(s) then
-				s.rendered_cols = nil
-				render_pages(s)
+			if valid(s) then
+				if s.rendered_cols ~= preview_width(s) then
+					s.rendered_cols = nil
+					render_pages(s)
+				else
+					-- The split may have moved without changing width. Re-place the
+					-- resident image using the window's new absolute coordinates.
+					s.placement_key = nil
+					queue_preview_fraction(s, source_view_fraction(s))
+				end
+			end
+		end,
+	})
+	vim.api.nvim_create_autocmd("QuitPre", {
+		group = s.group,
+		buffer = source_buf,
+		callback = function()
+			-- Tear down the companion first. The user's original :q/:wq can
+			-- then close the source (and exit Neovim when it is the last window)
+			-- instead of stranding an edocview scratch window behind it.
+			if session == s then
+				M.stop()
 			end
 		end,
 	})
